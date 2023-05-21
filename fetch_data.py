@@ -2,6 +2,9 @@ import os
 import json
 import requests
 
+BASE_URL = "https://serverjars.com/api/"
+DIRECTORY_PATH = 'minecraftversions'
+
 categories = {
     "vanilla": ["vanilla", "snapshot"],
     "servers": ["paper", "purpur", "sponge"],
@@ -10,61 +13,98 @@ categories = {
     "bedrock": ["pocketmine"],
 }
 
+def create_directory(type, category):
+    try:
+        os.makedirs(os.path.join(DIRECTORY_PATH, type, category), exist_ok=True)
+    except OSError as e:
+        print(f"Error creating directory: {e}")
+
+def get_filepath(type, category, filename):
+    return os.path.join(DIRECTORY_PATH, type, category, filename)
+
 def fetch_data(type, category):
-    base_url = "https://serverjars.com/api/"
-    url = f"{base_url}fetchAll/{type}/{category}"
-    response = requests.get(url)
-    json_data = response.json()
-    # Create the directory if it does not exist
-    os.makedirs(os.path.join('minecraftversions', type, category), exist_ok=True)
+    url = f"{BASE_URL}fetchAll/{type}/{category}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data: {e}")
+        return None
 
-    # Extract the hashes (md5) and save them to a file
-    hashes = [item.get('md5') for item in json_data.get('response', []) if item.get('md5')]
-    with open(os.path.join('minecraftversions', type, category, 'hashes.txt'), 'w') as f:
-        for hash in hashes:
-            f.write(hash + '\n')
+def write_hashes_to_file(hashes, filepath):
+    try:
+        with open(filepath, 'w') as f:
+            for hash in hashes:
+                f.write(hash + '\n')
+    except IOError as e:
+        print(f"Error writing hashes to file: {e}")
 
-    return json_data
+def get_hashes_from_file(filepath):
+    try:
+        with open(filepath, 'r') as f:
+            return [line.strip() for line in f]
+    except IOError as e:
+        print(f"Error reading hashes from file: {e}")
+        return []
 
+def write_json_to_file(json_data, filepath):
+    try:
+        with open(filepath, 'w') as outfile:
+            json.dump(json_data, outfile)
+    except IOError as e:
+        print(f"Error writing JSON to file: {e}")
 
 def download_file(type, category, version, api_hash):
-    file_path = os.path.join('minecraftversions', type, category, f"{version}.jar")
-    hash_file_path = os.path.join('minecraftversions', type, category, 'hashes.txt')
+    filepath = get_filepath(type, category, f"{version}.jar")
+    hash_filepath = get_filepath(type, category, 'hashes.txt')
 
-    # If the hash file exists and the current file's hash is in the hash file, skip the download.
-    if os.path.exists(hash_file_path):
-        with open(hash_file_path, 'r') as f:
-            hashes = [line.strip() for line in f]
-        if api_hash in hashes:
-            print(f"File {file_path} already exists and has the same hash, skipping download.")
+    # Check if .jar file already exists
+    if os.path.exists(filepath):
+        if os.path.exists(hash_filepath):
+            hashes = get_hashes_from_file(hash_filepath)
+            if api_hash in hashes:
+                print(f"File {filepath} already exists and has the same hash, skipping download.")
+                return
+        else:
+            print(f"File {filepath} already exists but no hash file found. Please check manually.")
             return
 
-    download_base_url = "https://serverjars.com/api/"
-    url = f"{download_base_url}fetchJar/{type}/{category}/{version}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        # Create the directory if it does not exist
-        os.makedirs(f'minecraftversions/{type}/{category}', exist_ok=True)
-        # Write the version into the directory
-        with open(file_path, 'wb') as outfile:
+    # If .jar file does not exist, download it
+    url = f"{BASE_URL}fetchJar/{type}/{category}/{version}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        create_directory(type, category)
+        with open(filepath, 'wb') as outfile:
             outfile.write(response.content)
-        print(f"File successfully downloaded to {file_path}")
-    else:
-        print(f"Failed to download version {version}.")
+        print(f"File successfully downloaded to {filepath}")
+    except requests.exceptions.RequestException as e:
+        print(f"Error downloading file: {e}")
 
-def write_to_file(json_data, type, category):
-    # Write the version into the directory
-    with open(os.path.join('minecraftversions', type, category, f"{category}.json"), 'w') as outfile:
-        json.dump(json_data, outfile)
-    print(f"Data successfully written to minecraftversions/{type}/{category}/{category}.json")
 
-if __name__ == "__main__":
-    for type, categories in categories.items():
-        for category in categories:
+def main():
+    for type, categories_list in categories.items():
+        for category in categories_list:
             data = fetch_data(type=type, category=category)
-            write_to_file(data, type=type, category=category)
+            if data is None:
+                continue
+            create_directory(type, category)
+            
+            hashes = [item.get('md5') for item in data.get('response', []) if item.get('md5')]
+            write_hashes_to_file(hashes, get_filepath(type, category, 'hashes.txt'))
+
+            write_json_to_file(data, get_filepath(type, category, f"{category}.json"))
+            print(f"Data successfully written to {get_filepath(type, category, f'{category}.json')}")
+            
             for item in data.get('response', []):
                 version = item.get('version')
-                api_hash = item.get('md5')  # Get the hash (md5) from the API response
+                api_hash = item.get('md5')
                 if version and api_hash:
                     download_file(type=type, category=category, version=version, api_hash=api_hash)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
