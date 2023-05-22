@@ -82,7 +82,7 @@ def download_file(type, category, version, api_hash):
     except requests.exceptions.RequestException as e:
         print(f"Error downloading file: {e}")
 
-
+# main function
 def main():
     for type, categories_list in categories.items():
         for category in categories_list:
